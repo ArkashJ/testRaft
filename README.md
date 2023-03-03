@@ -37,6 +37,13 @@ Leader Election
     Followers respond to each respondEntries message. Election term till followers stops recieveing heartbeats. Then stoo leader and re-election
 
 - In case of split vote, two nodes send messages at the same time. Each candidate has 2 votes and no more for this term. Nodes wait for a new election
+
+Leader election
+The leader periodically sends a heartbeat to its followers to maintain authority. A leader election is triggered when a follower times out after waiting for a heartbeat from the leader. This follower transitions to the candidate state and increments its term number. After voting for itself, it issues RequestVotes RPC in parallel to others in the cluster. Three outcomes are possible:
+
+The candidate receives votes from the majority of the servers and becomes the leader. It then sends a heartbeat message to others in the cluster to establish authority.
+If other candidates receive AppendEntries RPC, they check for the term number. If the term number is greater than their own, they accept the server as the leader and return to follower state. If the term number is smaller, they reject the RPC and still remain a candidate.
+The candidate neither loses nor wins. If more than one server becomes a candidate at the same time, the vote can be split with no clear majority. In this case a new election begins after one of the candidates times out.
 -----------------------------------------------------------------------------------------------------------
 
 Log Replication
