@@ -49,3 +49,4 @@ The candidate neither loses nor wins. If more than one server becomes a candidat
 Log Replication
 
 - Request sent by leader for AppendEntries. Client sends the change to the leader, which commits after a majority is recieved, response sent to the client
+-----------------------------------------------------------------------------------------------------------

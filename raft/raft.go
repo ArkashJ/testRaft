@@ -41,6 +41,10 @@ type Raft struct {
 	persister *Persister   // object to hold this peer's persister state
 	me        int          // peers index
 	dead      int32        // sent by Kill()
+
+	currentTerm int
+	votedFor    string
+	log         map[int]string
 }
 
 // -------------------------------------------------------------------------------------------------
