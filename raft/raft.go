@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // -------------------------------------------------------------------------------------------------
@@ -43,16 +44,20 @@ type Raft struct {
 	persister *Persister   // object to hold this peer's persister state
 	me        int          // peers index
 	dead      int32        // sent by Kill()
+
 	//states constant across all servers
 	currentTerm int
 	votedFor    string
 	log         []LogItem
+
 	//states volatile for all servers
 	commitIndex int
 	lastApplied int
+
 	//states needed by the leader
 	nextIndex  []int
 	matchIndex []int
+
 	// server can be follower, candidate or leader
 	serverState string
 }
@@ -81,49 +86,66 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 // -------------------------------------------------------------------------------------------------
+type AppendEntriesArgs struct {
+	term         int
+	leaderID     string
+	prevLogTerm  int
+	prevLogIndex int
+	entries      []LogItem
+	leaderCommit int
+}
+
+type AppendEntriesReply struct {
+	term    int
+	success bool
+}
+
+// -------------------------------------------------------------------------------------------------
 // RequestVoteArgs contains the currentTerm of the candidate, its id, index and term of the candidates last log entry
 type RequestVoteArgs struct {
 	term         int
 	candidateId  string
 	lastLogIndex int
-	lastLogTerm  string
+	lastLogTerm  int
 }
 
-// -------------------------------------------------------------------------------------------------
 // RequestVoteReply will contain the reply of the RequestVote Rpc.
 type RequestVoteReply struct {
 	term        int
 	voteGranted bool
 }
 
-// -------------------------------------------------------------------------------------------------
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
+// rpc call to request for a vote which sets the term and returns whether the vote was granted or not
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
 	reply.term = rf.currentTerm
+	reply.voteGranted = false
 
 	if args.term < rf.currentTerm {
-		reply.voteGranted = false
+		return
 	}
 
-	if (rf.votedFor == "" || rf.votedFor == args.candidateId) && args.lastLogTerm == rf.log[args.lastLogIndex] {
-		reply.voteGranted = true
+	if rf.votedFor != "" || rf.votedFor != args.candidateId {
+		return
+	}
+	serverLastLogIndex, severLastLogTerm := rf.getLastLogItem()
+
+	if args.lastLogTerm != severLastLogTerm || (args.lastLogTerm == severLastLogTerm && args.lastLogIndex < serverLastLogIndex) {
+		return
 	}
 
 	reply.term = args.term
+	reply.voteGranted = true
 	rf.currentTerm = args.term
 	rf.votedFor = args.candidateId
-
-	return nil
 }
 
-// -------------------------------------------------------------------------------------------------
-// send rpc to the server which is the index in rf.peers[]. The call will always return t/f
-// unless there is a problem with the handler function on the server side
-// Call() sends a request and waits, if the reply comes with a timeout, its true otherwise Call() returns false
+// send rpc to the server (index in rf.peers[]). Call always returns t/f unless problem with server side handler function
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	// Call() sends a request and waits, if the reply comes with a timeout, its true otherwise Call() returns false
 	return ok
 }
 
@@ -143,7 +165,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 func (rf *Raft) persist() {
 }
 
-// -------------------------------------------------------------------------------------------------
 // restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
@@ -158,7 +179,6 @@ func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 }
 
-// -------------------------------------------------------------------------------------------------
 func (rf *Raft) Killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
@@ -168,6 +188,9 @@ func (rf *Raft) Killed() bool {
 // start a new election if the server hasnt recieved a heartbeat
 func (rf *Raft) ticker() {
 	for !rf.Killed() {
+		//start a new leader election if the peer hasnt heard from the leader in a while
+		time.Sleep(time.Second * 5)
+
 	}
 }
 
