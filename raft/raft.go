@@ -58,14 +58,40 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 // -------------------------------------------------------------------------------------------------
-
+// RequestVoteArgs contains the currentTerm of the candidate, its id, index and term of the candidates last log entry
 type RequestVoteArgs struct {
+	term         int
+	candidateId  string
+	lastLogIndex int
+	lastLogTerm  string
 }
 
+// RequestVoteReply will contain the reply of the RequestVote Rpc.
 type RequestVoteReply struct {
+	term        int
+	voteGranted bool
 }
 
-func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) error {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.term = rf.currentTerm
+	reply.voteGranted = false
+
+	if args.term < rf.currentTerm {
+		reply.voteGranted = false
+	}
+
+	if (rf.votedFor == "" || rf.votedFor == args.candidateId) && args.lastLogTerm == rf.log[args.lastLogIndex] {
+		reply.voteGranted = true
+	}
+
+	reply.term = args.term
+	rf.currentTerm = args.term
+	rf.votedFor = args.candidateId
+
+	return nil
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -127,10 +153,14 @@ func (rf *Raft) ticker() {
 // -------------------------------------------------------------------------------------------------
 
 func Make(peers []*ClientEnd, me int, persister *Persister, apply chan ApplyMsg) *Raft {
-	rf := &Raft{}
-	rf.peers = peers
-	rf.me = me
-	rf.persister = persister
+	rf := &Raft{
+		peers:       peers,
+		me:          me,
+		persister:   persister,
+		currentTerm: 0,
+		votedFor:    "",
+		log:         make(map[int]string),
+	}
 
 	rf.readPersist(persister.ReadRaftState())
 	go rf.ticker()
