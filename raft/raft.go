@@ -46,7 +46,37 @@ type Raft struct {
 // return currentTerm and whether this server believes its the leader or not
 func (rf *Raft) GetState() (int, bool) {
 	var term int
-	var isleader bool
+	var isLeader bool
 	//code
-	return term, isleader
+	return term, isLeader
+}
+
+type RequestVoteArgs struct {
+}
+
+type RequestVoteReply struct {
+}
+
+func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
+}
+
+// send rpc to the server which is the index in rf.peers[]. The call will always return t/f
+// unless there is a problem with the handler function on the server side
+// Call() sends a request and waits, if the reply comes with a timeout, its true otherwise Call() returns false
+
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
+	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	return ok
+}
+
+// the service using raft must return the index of the value to be committed
+// return false if the server is not the lader otherwise, return the index of where the log would
+// have been committed, the currentTerm and true
+
+func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	index := -1
+	term := -1
+	isLeader := true
+
+	return index, term, isLeader
 }
