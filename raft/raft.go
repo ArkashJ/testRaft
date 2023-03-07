@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"math"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -100,6 +101,48 @@ type AppendEntriesReply struct {
 	success bool
 }
 
+func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	reply.term = rf.currentTerm
+	reply.success = false
+
+	if args.term < rf.currentTerm { // case when term lags behind currentTerm
+		return
+	}
+
+	_, lastLogIndex := rf.getLastLogItem()
+	if rf.log[args.prevLogIndex].Term == 0 { // case where log doesnt have an term at prevLogIndex
+		return
+	}
+
+	if rf.log[args.prevLogIndex].Term != args.prevLogTerm { //case with entry conflict
+
+		remainLen := lastLogIndex - args.prevLogIndex
+		//deleting the existing entries and ones that follow it
+		for i := args.prevLogIndex; i < args.prevLogIndex+remainLen; i++ {
+			rf.log[i].Term = 0
+		}
+		//setting the prevLogIndex term to prevLogTerm
+		rf.log[args.prevLogIndex].Term = args.prevLogTerm
+	}
+
+	if lastLogIndex < args.prevLogIndex {
+		//appending all entries that are not in the log
+		for i := lastLogIndex; i < args.prevLogIndex; i++ {
+			rf.log[i].Term = args.entries[i-lastLogIndex].Term
+		}
+	}
+
+	if args.leaderCommit > rf.commitIndex {
+		// Find the minimum of commitIndex and args.prevLogIndex
+		minIndex := int(math.Min(float64(args.prevLogIndex), float64(rf.commitIndex)))
+		rf.commitIndex = int(math.Min(float64(args.leaderCommit), float64(minIndex)))
+	}
+
+}
+
 // -------------------------------------------------------------------------------------------------
 // RequestVoteArgs contains the currentTerm of the candidate, its id, index and term of the candidates last log entry
 type RequestVoteArgs struct {
@@ -130,8 +173,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if rf.votedFor != "" || rf.votedFor != args.candidateId {
 		return
 	}
-	serverLastLogIndex, severLastLogTerm := rf.getLastLogItem()
 
+	serverLastLogIndex, severLastLogTerm := rf.getLastLogItem()
 	if args.lastLogTerm != severLastLogTerm || (args.lastLogTerm == severLastLogTerm && args.lastLogIndex < serverLastLogIndex) {
 		return
 	}
