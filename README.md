@@ -53,63 +53,58 @@ Log Replication
 -----------------------------------------------------------------------------------------------------------
 
 
-State variables:
---------------------------------------
-ALL servers 
-currentTerm - index of the lastest term the server has seen
-votedFor    - candidate id that recieved vote in current term
-log[]       - log entries
+State Variables
 
-volatile across servers
-commitIndex - last incdex comitted
-lastApplied - index of the lastest log applied to the state machine
+All servers:
+- currentTerm: latest term server has seen (start at 0)
+- votedFor   : candidate id last elected
+- log[]      : log entries 
 
-volatile across leaders
-nextIndex[]  - for each server, index of the log entry to be send to that server
-matchIndex[] - for each server, index of highest log entry replicated on the server
---------------------------------------
-AppendEntries RPC
-term, leaderID, prevLogIndex, prevLogTerm, entries[] - empty for appendRPC, send more for efficieny, leaderCommit
+Volatile on servers:
+- commitIndex : index of the last log committed on the server
+- lastApplied : index of last log applied to the state machine
 
-- term < currentTerm return false
-- return false if there is no prevLogterm for the latest prevLogIndex
-- if entry conflicts (same entry different terms), delete it and all that follow
-- append new entries not in the log
-- if leaderCommit > commitIndex, min (leaderCommit, index of latest commit)
+Volatile on leaders:
+- nextIndex[] : index to be sent to servers
+- matchIndex[]: index to be replicated across servers
 
---------------------------------------
-RequestVote RPC
-term, candidateID, LastLogIndex, LastLogTerm
+AppliedEntries RPC:
 
-- if term < currentTerm return false
-- if votedFor is null or candidateId and candidate's log is at least as up to date as the recievers log, grant vote
---------------------------------------
-Rules for all servers
-- if commitIndex > lastApplied, lastApplied = commitIndex
-- if rpc contains term T > currentTerm, currentTerm = T, convert to follower
+- term, leaderId, prevLogTerm, prevLogIndex, leaderIndex, entries[]
+false if term < currentTerm
+false if prevLogTerm at prevLogIndex is not there
+if logterm is different at the same index, delete it and all that follow
+if leaderCommit > commitIndex, commitIndex = min(leaderCommit, index of last log applied)
+append to the logs of servers
 
-Rules for followers
-- respond to candidates and leaders
-- if no heartbeat comes for leader or granting vote to new candidate, start new election and become candidate
+RequestVote Rpc:
+- term, candidateId, lastLogTerm, lastLogIndex
+false if term < currentTerm
+if votedFor is null or candidateId and cadidate's log as up to date, grant vote
 
-Rules for candidate
-start an election and
-- increment cuurentTerm
-- vote for self
-- send RequestVote rpc
-- reset election timer
+Conditions for all servers
+if term t > currentTerm, convert to follower and currentterm = t
+if commitIndex>lastApplied, lastApplied = commitIndex
 
-if majority votes recieved become leader
-if appendEntries rpc become follower
-if no response, new timer
+followers
+- reply to candidates and leaders
+- if no heartbeat and election timeout runs out, become candidate
+
+candidates
+- when becomes candidate
+    - increment currentTerm
+    - vote for self
+    - send RequestVote Rpc
+    - reset election timer
+- if recieved majority, new leader
+- if appendEntries RPC recieved, become follower
+- if no result, start new election
 
 leaders
-- upon election send empty appendEntries Rpcs
-- if command recievd from client, append entry to log after entry applied to state machine
-- if logIndex >= nextIndex send AppendEntries Rpc with log entries starting at nextIndex 
-    if successful update nextIndex and logEntries, else decrement nextIndex and try again
-- N > commitIndex, a majority
-of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N
-
-
-
+- when becomes leader send out an empty AppendEntries Rpc and do so during idle periods as well
+- if lastIndex >= nextIndex send AppendEntries RPC
+    - if successfull update nextIndex and matchIndex
+    - else decrement nextIndex and try again
+- if command recieved from client, append entry to local log, respond after entry applied to state machine
+- if there exists an N such that N >= commitIndex, a majority of matchIndex[i] > N and log[N].term == currentTerm,
+set commitIndex = N
