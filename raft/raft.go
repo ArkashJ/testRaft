@@ -2,6 +2,7 @@ package raft
 
 import (
 	"math"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -167,7 +168,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 }
 
 // send rpc to the server (index in rf.peers[]). Call always returns t/f unless problem with server side handler function
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
+func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	// Call() sends a request and waits, if the reply comes with a timeout, its true otherwise Call() returns false
 	return ok
@@ -243,6 +244,57 @@ func (rf *Raft) Kill() {
 func (rf *Raft) Killed() bool {
 	z := atomic.LoadInt32(&rf.dead)
 	return z == 1
+}
+
+// -------------------------------------------------------------------------------------------------
+
+func (rf *Raft) startNewElection() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	// increment current term, change state to candidate, send RequestVoteRPC and vote for self
+	rf.currentTerm++
+	rf.votedFor = "" //set in the RequestVote function
+	rf.serverState = "candidate"
+
+	lastLogIndex, lastLogTerm := rf.getLastLogItem()
+
+	var voteRecieved int32 = 1
+
+	for server := range rf.peers {
+		if server == rf.me {
+			continue
+		}
+
+		args := &RequestVoteArgs{
+			term:         rf.currentTerm,
+			candidateId:  strconv.Itoa(rf.me),
+			lastLogIndex: lastLogIndex,
+			lastLogTerm:  lastLogTerm,
+		}
+		var reply RequestVoteReply
+
+		go func(server int, args *RequestVoteArgs, reply *RequestVoteReply) {
+			if rf.sendRequestVote(server, args, reply) {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+
+				if reply.term > rf.currentTerm {
+					rf.currentTerm = reply.term
+					rf.votedFor = ""
+					rf.serverState = "follower"
+				}
+
+				if reply.voteGranted {
+					atomic.AddInt32(&voteRecieved, 1)
+					if atomic.LoadInt32(&voteRecieved) > int32(len(rf.peers)/2) {
+						rf.serverState = "leader"
+						rf.nextIndex = make([]int, len(rf.peers))
+						rf.matchIndex = make([]int, len(rf.peers))
+					}
+				}
+			}
+		}(server, args, &reply)
+	}
 }
 
 // -------------------------------------------------------------------------------------------------
