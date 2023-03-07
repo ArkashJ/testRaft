@@ -218,6 +218,22 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// func (rf *Raft) runFollower() {
+// 	for !rf.Killed() {
+// 		rf.mu.Lock()
+// 		defer rf.mu.Unlock()
+// 		select {
+// 			case <-time.After(time.Duration(750+rand.Intn(500)) * time.Millisecond):
+// 			//if election timer runs out
+// 				rf.serverState = "candidate"
+// 				rf.currentTerm += 1
+// 				rf.votedFor =
+// 		}
+
+// 	}
+// }
+
+// -------------------------------------------------------------------------------------------------
 // the code does not halt go routines but calls Kill(), one can check if go routines are killed by looking at the value
 // Atomic prevents the need for locking
 func (rf *Raft) Kill() {
@@ -234,8 +250,11 @@ func (rf *Raft) Killed() bool {
 func (rf *Raft) ticker() {
 	for !rf.Killed() {
 		//start a new leader election if the peer hasnt heard from the leader in a while
-		time.Sleep(time.Second * 5)
-
+		select {
+		case <-time.After(time.Duration(5) * time.Second):
+			rf.startNewElection()
+		default:
+		}
 	}
 }
 
