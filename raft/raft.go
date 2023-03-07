@@ -2,41 +2,10 @@ package raft
 
 import (
 	"math"
-	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-// -------------------------------------------------------------------------------------------------
-
-type reqMsg struct {
-	endName  interface{}
-	svcMeth  string
-	argsType reflect.Type
-	args     []byte
-	replyCh  chan replyMsg
-}
-
-type replyMsg struct {
-	ok    bool
-	reply []byte
-}
-type ClientEnd struct {
-	endName interface{}   // this is endpoints name
-	ch      chan reqMsg   // copy if Network.endCh
-	done    chan struct{} //closed when network is cleaning up
-}
-
-// -------------------------------------------------------------------------------------------------
-
-// once a new log entry is commited, peer sends an ApplyMsg to the service via applyCh passed to Make().
-// CommandValid is set to true to indicate ApplyMsg contains a new log entry
-type ApplyMsg struct {
-	CommandValid bool
-	Command      interface{}
-	CommandIndex int
-}
 
 // -------------------------------------------------------------------------------------------------
 type Raft struct {
@@ -83,6 +52,16 @@ func (rf *Raft) GetState() (int, bool) {
 	var term int
 	var isLeader bool
 	//code
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	term = rf.currentTerm
+	if rf.serverState == "leader" {
+		isLeader = true
+	} else {
+		isLeader = false
+	}
+
 	return term, isLeader
 }
 
@@ -137,10 +116,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if args.leaderCommit > rf.commitIndex {
 		// Find the minimum of commitIndex and args.prevLogIndex
-		minIndex := int(math.Min(float64(args.prevLogIndex), float64(rf.commitIndex)))
-		rf.commitIndex = int(math.Min(float64(args.leaderCommit), float64(minIndex)))
+		rf.commitIndex = int(math.Min(float64(args.leaderCommit), float64(args.prevLogIndex)))
 	}
 
+	reply.term = args.term
+	reply.success = true
+	rf.currentTerm = args.term
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -206,6 +187,14 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 // -------------------------------------------------------------------------------------------------
 func (rf *Raft) persist() {
+	// Your code here (2C).
+	// Example:
+	// w := new(bytes.Buffer)
+	// e := labgob.NewEncoder(w)
+	// e.Encode(rf.xxx)
+	// e.Encode(rf.yyy)
+	// data := w.Bytes()
+	// rf.persister.SaveRaftState(data)
 }
 
 // restore previously persisted state.
@@ -213,6 +202,19 @@ func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		return
 	}
+	// Your code here (2C).
+	// Example:
+	// r := bytes.NewBuffer(data)
+	// d := labgob.NewDecoder(r)
+	// var xxx
+	// var yyy
+	// if d.Decode(&xxx) != nil ||
+	//    d.Decode(&yyy) != nil {
+	//   error...
+	// } else {
+	//   rf.xxx = xxx
+	//   rf.yyy = yyy
+	// }
 }
 
 // -------------------------------------------------------------------------------------------------
