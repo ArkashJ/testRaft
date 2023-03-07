@@ -50,3 +50,66 @@ Log Replication
 
 - Request sent by leader for AppendEntries. Client sends the change to the leader, which commits after a majority is recieved, response sent to the client
 -----------------------------------------------------------------------------------------------------------
+-----------------------------------------------------------------------------------------------------------
+
+
+State variables:
+--------------------------------------
+ALL servers 
+currentTerm - index of the lastest term the server has seen
+votedFor    - candidate id that recieved vote in current term
+log[]       - log entries
+
+volatile across servers
+commitIndex - last incdex comitted
+lastApplied - index of the lastest log applied to the state machine
+
+volatile across leaders
+nextIndex[]  - for each server, index of the log entry to be send to that server
+matchIndex[] - for each server, index of highest log entry replicated on the server
+--------------------------------------
+AppendEntries RPC
+term, leaderID, prevLogIndex, prevLogTerm, entries[] - empty for appendRPC, send more for efficieny, leaderCommit
+
+- term < currentTerm return false
+- return false if there is no prevLogterm for the latest prevLogIndex
+- if entry conflicts (same entry different terms), delete it and all that follow
+- append new entries not in the log
+- if leaderCommit > commitIndex, min (leaderCommit, index of latest commit)
+
+--------------------------------------
+RequestVote RPC
+term, candidateID, LastLogIndex, LastLogTerm
+
+- if term < currentTerm return false
+- if votedFor is null or candidateId and candidate's log is at least as up to date as the recievers log, grant vote
+--------------------------------------
+Rules for all servers
+- if commitIndex > lastApplied, lastApplied = commitIndex
+- if rpc contains term T > currentTerm, currentTerm = T, convert to follower
+
+Rules for followers
+- respond to candidates and leaders
+- if no heartbeat comes for leader or granting vote to new candidate, start new election and become candidate
+
+Rules for candidate
+start an election and
+- increment cuurentTerm
+- vote for self
+- send RequestVote rpc
+- reset election timer
+
+if majority votes recieved become leader
+if appendEntries rpc become follower
+if no response, new timer
+
+leaders
+- upon election send empty appendEntries Rpcs
+- if command recievd from client, append entry to log after entry applied to state machine
+- if logIndex >= nextIndex send AppendEntries Rpc with log entries starting at nextIndex 
+    if successful update nextIndex and logEntries, else decrement nextIndex and try again
+- N > commitIndex, a majority
+of matchIndex[i] ≥ N, and log[N].term == currentTerm: set commitIndex = N
+
+
+
