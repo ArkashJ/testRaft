@@ -2,6 +2,7 @@ package raft
 
 import (
 	"math"
+	"math/rand"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -32,8 +33,8 @@ type Raft struct {
 	// server can be follower, candidate or leader
 	serverState string
 
-	electionTimer  *time.Timer
-	heartbeatTimer *time.Timer
+	electionTimer *time.Timer
+	// heartbeatTimer *time.Timer
 }
 
 type LogItem struct {
@@ -42,6 +43,9 @@ type LogItem struct {
 }
 
 // -------------------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
+// HELPER FUNCTIONS
+
 // helper function to get the last log item
 func (rf *Raft) getLastLogItem() (int, int) {
 	lastLogIndex := len(rf.log) - 1
@@ -51,6 +55,27 @@ func (rf *Raft) getLastLogItem() (int, int) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// start election timer, stop it and reset it
+func (rf *Raft) startElectionTimer() {
+	rf.electionTimer = time.NewTimer(5 * time.Second)
+}
+
+func (rf *Raft) stopElectionTimer() {
+	rf.electionTimer.Stop()
+}
+
+func (rf *Raft) resetElectionTimer() {
+	rf.stopElectionTimer()
+	rf.startElectionTimer()
+}
+
+// set hearbeats to between 750 and 1250 ms
+// func (rf *Raft) HeartbeatTimer() {
+// 	rf.heartbeatTimer = time.NewTimer(time.Duration(750+rand.Intn(500)) * time.Second)
+// }
+
+// -------------------------------------------------------------------------------------------------
+// STATE and START Functions
 // return currentTerm and whether this server believes its the leader or not
 func (rf *Raft) GetState() (int, bool) {
 	var term int
@@ -69,7 +94,19 @@ func (rf *Raft) GetState() (int, bool) {
 	return term, isLeader
 }
 
+// the service using raft must return the index of the value to be committed
+// return false if the server is not the lader otherwise, return the index of where the log would
+// have been committed, the currentTerm and true
+func (rf *Raft) Start(command interface{}) (int, int, bool) {
+	index := -1
+	term := -1
+	isLeader := true
+
+	return index, term, isLeader
+}
+
 // -------------------------------------------------------------------------------------------------
+// APPENDENTRIES STRUCT AND FUNCTIONS
 type AppendEntriesArgs struct {
 	term         int
 	leaderID     string
@@ -128,7 +165,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.currentTerm = args.term
 }
 
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	// Call() sends a request and waits, if the reply comes with a timeout, its true otherwise Call() returns false
+	return ok
+}
+
 // -------------------------------------------------------------------------------------------------
+// REQUESTVOTE STRUCTS AND FUNCTIONS
 // RequestVoteArgs contains the currentTerm of the candidate, its id, index and term of the candidates last log entry
 type RequestVoteArgs struct {
 	term         int
@@ -178,18 +222,8 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 // -------------------------------------------------------------------------------------------------
-// the service using raft must return the index of the value to be committed
-// return false if the server is not the lader otherwise, return the index of where the log would
-// have been committed, the currentTerm and true
-func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+// PERSIST FUNCTIONS
 
-	return index, term, isLeader
-}
-
-// -------------------------------------------------------------------------------------------------
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
@@ -222,6 +256,8 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// KILL FUNCTIONS
+
 // the code does not halt go routines but calls Kill(), one can check if go routines are killed by looking at the value
 // Atomic prevents the need for locking
 func (rf *Raft) Kill() {
@@ -234,21 +270,7 @@ func (rf *Raft) Killed() bool {
 }
 
 // -------------------------------------------------------------------------------------------------
-func (rf *Raft) startElectionTimer() {
-	rf.electionTimer = time.NewTimer(5 * time.Second)
-}
-
-func (rf *Raft) stopElectionTimer() {
-	rf.electionTimer.Stop()
-}
-
-func (rf *Raft) resetElectionTimer() {
-	rf.stopElectionTimer()
-	rf.startElectionTimer()
-}
-
-// -------------------------------------------------------------------------------------------------
-
+// START NEW ELECTION AND TICKER
 func (rf *Raft) startNewElection() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -289,9 +311,11 @@ func (rf *Raft) startNewElection() {
 				if reply.voteGranted {
 					atomic.AddInt32(&voteRecieved, 1)
 					if atomic.LoadInt32(&voteRecieved) > int32(len(rf.peers)/2) {
+						//majority of votes recieved, elect a new leader
 						rf.serverState = "leader"
 						rf.nextIndex = make([]int, len(rf.peers))
 						rf.matchIndex = make([]int, len(rf.peers))
+						rf.resetElectionTimer()
 					}
 				}
 			}
@@ -299,25 +323,58 @@ func (rf *Raft) startNewElection() {
 	}
 }
 
-// -------------------------------------------------------------------------------------------------
-
-func (rf *Raft) sendHeartbeats() {
-
-}
-
-// -------------------------------------------------------------------------------------------------
 // start a new election if the server hasnt recieved a heartbeat
 func (rf *Raft) ticker() {
 	for !rf.Killed() {
 		//start a new leader election if the peer hasnt heard from the leader in a while
 		select {
-		case <-time.After(time.Duration(5) * time.Second):
+		case <-rf.electionTimer.C:
 			rf.startNewElection()
 			for rf.serverState != "leader" { // deals with the case when there is a stalemate
 				rf.startNewElection()
 			}
 		default:
+			go rf.sendHeartbeats()
 		}
+	}
+}
+
+// -------------------------------------------------------------------------------------------------
+// SEND HEARTBEATS
+func (rf *Raft) sendHeartbeats() {
+	for {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+
+		lastLogIndex, lastLogTerm := rf.getLastLogItem()
+		// The newly elected leader sends heartbeats through the AppendEntries Rpc which is empty
+		for server := range rf.peers {
+			if server == rf.me {
+				continue
+			}
+			//should be empty
+			args := &AppendEntriesArgs{
+				term:         rf.currentTerm,
+				leaderID:     strconv.Itoa(rf.me),
+				prevLogTerm:  lastLogTerm,
+				prevLogIndex: lastLogIndex,
+				entries:      nil,
+				leaderCommit: rf.commitIndex,
+			}
+			reply := &AppendEntriesReply{}
+
+			go func(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) {
+				if rf.sendAppendEntries(server, args, reply) {
+					if reply.term > rf.currentTerm {
+						rf.currentTerm = reply.term
+						rf.serverState = "follower"
+						return
+					}
+				}
+			}(server, args, reply)
+		}
+		time.Sleep(time.Duration(750+rand.Intn(500)) * time.Second)
+		//Sleep for 750-1250ms before sending a heartbeat
 	}
 }
 
