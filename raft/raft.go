@@ -31,6 +31,9 @@ type Raft struct {
 
 	// server can be follower, candidate or leader
 	serverState string
+
+	electionTimer  *time.Timer
+	heartbeatTimer *time.Timer
 }
 
 type LogItem struct {
@@ -219,22 +222,6 @@ func (rf *Raft) readPersist(data []byte) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// func (rf *Raft) runFollower() {
-// 	for !rf.Killed() {
-// 		rf.mu.Lock()
-// 		defer rf.mu.Unlock()
-// 		select {
-// 			case <-time.After(time.Duration(750+rand.Intn(500)) * time.Millisecond):
-// 			//if election timer runs out
-// 				rf.serverState = "candidate"
-// 				rf.currentTerm += 1
-// 				rf.votedFor =
-// 		}
-
-// 	}
-// }
-
-// -------------------------------------------------------------------------------------------------
 // the code does not halt go routines but calls Kill(), one can check if go routines are killed by looking at the value
 // Atomic prevents the need for locking
 func (rf *Raft) Kill() {
@@ -247,11 +234,26 @@ func (rf *Raft) Killed() bool {
 }
 
 // -------------------------------------------------------------------------------------------------
+func (rf *Raft) startElectionTimer() {
+	rf.electionTimer = time.NewTimer(5 * time.Second)
+}
+
+func (rf *Raft) stopElectionTimer() {
+	rf.electionTimer.Stop()
+}
+
+func (rf *Raft) resetElectionTimer() {
+	rf.stopElectionTimer()
+	rf.startElectionTimer()
+}
+
+// -------------------------------------------------------------------------------------------------
 
 func (rf *Raft) startNewElection() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// increment current term, change state to candidate, send RequestVoteRPC and vote for self
+
 	rf.currentTerm++
 	rf.votedFor = "" //set in the RequestVote function
 	rf.serverState = "candidate"
@@ -298,6 +300,12 @@ func (rf *Raft) startNewElection() {
 }
 
 // -------------------------------------------------------------------------------------------------
+
+func (rf *Raft) sendHeartbeats() {
+
+}
+
+// -------------------------------------------------------------------------------------------------
 // start a new election if the server hasnt recieved a heartbeat
 func (rf *Raft) ticker() {
 	for !rf.Killed() {
@@ -305,6 +313,9 @@ func (rf *Raft) ticker() {
 		select {
 		case <-time.After(time.Duration(5) * time.Second):
 			rf.startNewElection()
+			for rf.serverState != "leader" { // deals with the case when there is a stalemate
+				rf.startNewElection()
+			}
 		default:
 		}
 	}
